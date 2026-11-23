@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>מערכת תכנון ותזמון רצפת ייצור</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Rubik -->
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: 'Rubik', sans-serif;
+      background-color: #f1f5f9;
+      color: #0f172a;
+      margin: 0;
+      padding-bottom: 72px;
+    }
+    @media (min-width: 1024px) {
+      body { padding-bottom: 0; }
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .gantt-bar { transition: all 0.2s ease; }
+    .gantt-bar:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    .pulse-dot { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Top Header -->
+  <header class="bg-slate-900 text-white sticky top-0 z-30 shadow-md">
+    <div class="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-9 h-9 rounded-xl bg-sky-600 flex items-center justify-center shrink-0 shadow font-bold text-white text-base">
+          🏭
+        </div>
+        <div class="min-w-0">
+          <h1 class="text-sm sm:text-lg font-bold tracking-tight truncate">מערכת תכנון ותזמון רצפת ייצור</h1>
+          <p class="hidden sm:block text-[11px] text-slate-400">מודל תזמון מכונות מרובה-תחנות · מזעור איחורים וניתוח "מה אם"</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <button onclick="openNewOrderModal()" class="bg-sky-600 hover:bg-sky-500 active:bg-sky-700 text-white text-xs sm:text-sm font-semibold px-3 py-2 rounded-lg shadow-sm transition">
+          + הזמנה חדשה
+        </button>
+        <label class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium px-2.5 py-2 rounded-lg border border-slate-700 cursor-pointer transition" title="ייבוא הזמנות מקובץ CSV">
+          📥 CSV
+          <input type="file" id="csv-upload-input" accept=".csv" class="hidden" onchange="handleCSVUpload(event)" />
+        </label>
+        <button onclick="exportScheduleCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium px-2.5 py-2 rounded-lg border border-slate-700 transition" title="ייצוא תוכנית עבודה ל-CSV">
+          📤 ייצוא
+        </button>
+        <button onclick="downloadStandaloneHTML()" class="hidden md:inline-flex bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-2.5 py-2 rounded-lg transition" title="הורד קובץ index.html">
+          ⬇️ הורד קובץ
+        </button>
+      </div>
+    </div>
+
+    <!-- Algorithm & Simulation Control Bar -->
+    <div class="bg-slate-800 border-t border-slate-700/80 px-3 sm:px-6 py-2">
+      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-300 font-medium">שיטת תזמון:</span>
+          <select id="scheduler-mode" onchange="runSchedulingEngine()" class="bg-slate-900 text-white text-xs font-semibold border border-slate-600 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-sky-400">
+            <option value="heuristic">מודל מוצע (מזעור איחורים + צמצום Setup)</option>
+            <option value="edd">תכנון ידני קיים (מיון לפי תאריך אספקה EDD)</option>
+          </select>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button onclick="openWhatIfModal()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-sm flex items-center gap-1">
+            ⚡ סימולציית "מה אם" (הזמנה דחופה)
+          </button>
+          <button onclick="resetDemoData()" class="text-xs text-slate-400 hover:text-white underline px-1">
+            איפוס נתונים
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- KPI Summary Strip -->
+  <section class="max-w-7xl w-full mx-auto px-3 sm:px-6 pt-4">
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+      <div class="bg-white rounded-xl p-3 border border-slate-200 shadow-sm">
+        <div class="text-[11px] text-slate-500 font-medium">אחוז אספקה בזמן (OTD)</div>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-otd" class="text-lg sm:text-xl font-bold text-emerald-600">0%</span>
+          <span class="text-[10px] font-semibold text-slate-400">בסיס ידני: 56%</span>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-3 border border-slate-200 shadow-sm">
+        <div class="text-[11px] text-slate-500 font-medium">זמן אספקה ממוצע</div>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-lead" class="text-lg sm:text-xl font-bold text-slate-800">0 ימים</span>
+          <span class="text-[10px] text-slate-400">קיים: 7.5 ימים</span>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-3 border border-slate-200 shadow-sm">
+        <div class="text-[11px] text-slate-500 font-medium">איחור ממוצע (למאחרות)</div>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-tardiness" class="text-lg sm:text-xl font-bold text-amber-600">0 ימים</span>
+          <span class="text-[10px] text-slate-400">קיים: 1.6 ימים</span>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-3 border border-slate-200 shadow-sm">
+        <div class="text-[11px] text-slate-500 font-medium">ניצולת מכונות אפקטיבית</div>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-util" class="text-lg sm:text-xl font-bold text-sky-600">0%</span>
+          <span id="kpi-setup-total" class="text-[10px] text-slate-500">Setup: 0 ש׳</span>
+        </div>
+      </div>
+      <div class="col-span-2 sm:col-span-1 bg-white rounded-xl p-3 border border-slate-200 shadow-sm">
+        <div class="text-[11px] text-slate-500 font-medium">הזמנות בתוכנית</div>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-orders-count" class="text-lg sm:text-xl font-bold text-indigo-600">0</span>
+          <span id="kpi-late-count" class="text-[10px] font-semibold text-rose-600">0 באיחור</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Workspace -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+    <!-- Left/Main Section: Gantt, Orders, Routing Matrix & Benchmark (8 cols) -->
+    <section id="panel-workspace" class="lg:col-span-8 flex flex-col gap-4">
+
+      <!-- Desktop Tabs -->
+      <div class="hidden lg:flex items-center gap-1.5 bg-white p-1.5 rounded-xl shadow-sm border border-slate-200">
+        <button onclick="switchTab('gantt')" data-tab="gantt" class="tab-btn flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-semibold bg-sky-600 text-white transition">גאנט מכונות קדימה</button>
+        <button onclick="switchTab('orders')" data-tab="orders" class="tab-btn flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-100 transition">הזמנות וזמני אספקה</button>
+        <button onclick="switchTab('routing')" data-tab="routing" class="tab-btn flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-100 transition">מטריצת מסלולים ומכונות</button>
+        <button onclick="switchTab('compare')" data-tab="compare" class="tab-btn flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-100 transition">השוואה לתכנון ידני</button>
+      </div>
+
+      <!-- What-If Alert Banner -->
+      <div id="whatif-banner" class="hidden bg-amber-50 border-2 border-amber-400 rounded-2xl p-3.5 text-slate-800 shadow-sm space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-bold text-sm text-amber-900 flex items-center gap-1.5">
+            ⚡ תוצאות ניתוח "מה אם" (Match-up להזמנה דחופה)
+          </div>
+          <button onclick="dismissWhatIfBanner()" class="text-xs text-slate-500 hover:text-slate-800 font-bold">✕ סגור</button>
+        </div>
+        <div id="whatif-summary" class="text-xs sm:text-sm leading-relaxed"></div>
+      </div>
+
+      <!-- TAB 1: FORWARD GANTT BY MACHINE -->
+      <div id="view-gantt" class="space-y-3">
+        <!-- Station Filter Pills -->
+        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+          <button onclick="setStationFilter('all')" data-st="all" class="st-filter-btn px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-900 text-white shrink-0">כל התחנות (6)</button>
+          <button onclick="setStationFilter('print')" data-st="print" class="st-filter-btn px-3 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 border border-slate-200 shrink-0">1. דפוס</button>
+          <button onclick="setStationFilter('finish')" data-st="finish" class="st-filter-btn px-3 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 border border-slate-200 shrink-0">2. קו גימור</button>
+          <button onclick="setStationFilter('rewind')" data-st="rewind" class="st-filter-btn px-3 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 border border-slate-200 shrink-0">3. גלגול וליפוף</button>
+          <button onclick="setStationFilter('booklet')" data-st="booklet" class="st-filter-btn px-3 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 border border-slate-200 shrink-0">4. הרכבת ספרונים</button>
+          <button onclick="setStationFilter('embellish')" data-st="embellish" class="st-filter-btn px-3 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 border border-slate-200 shrink-0">5. השבחות</button>
+          <button onclick="setStationFilter('sheet')" data-st="sheet" class="st-filter-btn px-3 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 border border-slate-200 shrink-0">6. חיתוך לגיליונות</button>
+        </div>
+
+        <!-- Legend -->
+        <div class="bg-white rounded-xl px-3 py-2 border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-500 inline-block"></span> מדבקות ותוויות</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-teal-500 inline-block"></span> למינטים</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-purple-600 inline-block"></span> ספרונים (פארמה)</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-amber-400 inline-block"></span> זמן התארגנות (Setup)</span>
+          </div>
+          <span class="text-slate-500">לחץ על פעולה בגאנט לפירוט זמנים</span>
+        </div>
+
+        <!-- Gantt Container -->
+        <div id="gantt-container" class="space-y-3"></div>
+      </div>
+
+      <!-- TAB 2: ORDERS & LEAD TIME CALCULATOR -->
+      <div id="view-orders" class="hidden space-y-3">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h2 class="text-base font-bold text-slate-800">צבר הזמנות פתוחות וזמני אספקה צפויים</h2>
+              <p class="text-xs text-slate-500">חישוב מועד סיום צפוי לכל הזמנה = סך זמני Setup ועיבוד במסלול + המתנה בתור</p>
+            </div>
+            <button onclick="openNewOrderModal()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow-sm">
+              + הזמנה חדשה
+            </button>
+          </div>
+          <div id="orders-list" class="space-y-2.5"></div>
+        </div>
+      </div>
+
+      <!-- TAB 3: ROUTING MATRIX & MACHINES -->
+      <div id="view-routing" class="hidden space-y-4">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 overflow-x-auto">
+          <h2 class="text-base font-bold text-slate-800 mb-1">מטריצת מסלולים: משפחת מוצר × תחנה</h2>
+          <p class="text-xs text-slate-500 mb-3">ייצוג המסלול הטכנולוגי של כל משפחת מוצרים במפעל (1 = עובר בתחנה, 0 = מדלג)</p>
+          <table class="w-full text-xs sm:text-sm text-center border-collapse">
+            <thead>
+              <tr class="bg-slate-100 text-slate-700 border-b border-slate-200">
+                <th class="p-2.5 text-right font-bold">משפחת מוצר</th>
+                <th class="p-2.5">1. דפוס</th>
+                <th class="p-2.5">2. קו גימור</th>
+                <th class="p-2.5">3. גלגול וליפוף</th>
+                <th class="p-2.5">4. הרכבת ספרונים</th>
+                <th class="p-2.5">5. השבחות</th>
+                <th class="p-2.5">6. חיתוך לגיליונות</th>
+              </tr>
+            </thead>
+            <tbody id="routing-matrix-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+          <h2 class="text-base font-bold text-slate-800 mb-1">מכונות ברצפת הייצור (תחליפיות מול ייעודיות)</h2>
+          <p class="text-xs text-slate-500 mb-3">בכל מחלקה פועלות מכונות תחליפיות (70%–100%) לצד מכונות ייעודיות לעבודות מיוחדות (כגון פארמה / השבחות)</p>
+          <div id="machines-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+        </div>
+      </div>
+
+      <!-- TAB 4: BENCHMARK COMPARISON -->
+      <div id="view-compare" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-4 space-y-4">
+        <div>
+          <h2 class="text-base font-bold text-slate-800">השוואת ביצועים: מודל תזמון מוצע מול תכנון ידני (EDD)</h2>
+          <p class="text-xs text-slate-500">סימולציה על צבר ההזמנות הנוכחי להמחשת סגירת הפערים שהוגדרו באבן דרך 1</p>
+        </div>
+        <div id="comparison-table-container" class="overflow-x-auto"></div>
+      </div>
+
+    </section>
+
+    <!-- Right Section: AI Scheduling Co-Pilot (4 cols on desktop) -->
+    <aside id="panel-chat" class="hidden lg:flex lg:col-span-4 flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden h-[calc(100vh-225px)] sticky top-32">
+      <div class="bg-slate-900 text-white p-3 flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 pulse-dot"></span>
+          <span class="text-sm font-bold">עוזר תזמון ו-"מה אם" AI</span>
+        </div>
+        <button onclick="resetChat()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700">
+          נקה שיחה
+        </button>
+      </div>
+
+      <!-- Quick Prompts -->
+      <div class="p-2.5 bg-slate-50 border-b border-slate-200 flex gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+        <button onclick="sendQuickPrompt('הכנס הזמנה דחופה של 40,000 ספרונים ללקוח טבע')" class="text-[11px] bg-white hover:bg-rose-50 text-rose-800 border border-rose-200 rounded-full px-2.5 py-1 whitespace-nowrap shrink-0 font-medium">
+          ⚡ הזמנה דחופה (ספרונים)
+        </button>
+        <button onclick="sendQuickPrompt('השווה בין המודל המוצע לתכנון ידני')" class="text-[11px] bg-white hover:bg-sky-50 text-slate-700 border border-slate-200 rounded-full px-2.5 py-1 whitespace-nowrap shrink-0">
+          📊 השוואה לתכנון ידני
+        </button>
+        <button onclick="sendQuickPrompt('אילו הזמנות נמצאות בסיכון לאיחור?')" class="text-[11px] bg-white hover:bg-sky-50 text-slate-700 border border-slate-200 rounded-full px-2.5 py-1 whitespace-nowrap shrink-0">
+          ⏰ בדיקת איחורים
+        </button>
+      </div>
+
+      <div id="chat-messages" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/50"></div>
+
+      <form onsubmit="handleChatSubmit(event)" class="p-2.5 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0">
+        <input type="text" id="chat-input" placeholder="שאל על תזמון, איחורים או הזן הזמנה דחופה..." class="flex-1 border border-slate-300 focus:border-sky-500 focus:outline-none rounded-xl px-3 py-2.5 text-sm" />
+        <button type="submit" class="bg-sky-600 hover:bg-sky-500 text-white font-semibold px-4 py-2.5 rounded-xl text-sm shrink-0">
+          שלח
+        </button>
+      </form>
+    </aside>
+
+  </main>
+
+  <!-- Mobile Bottom Navigation Bar -->
+  <nav class="lg:hidden fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 z-40 flex items-center justify-around h-16 shadow-lg">
+    <button onclick="mobileNav('gantt')" data-mnav="gantt" class="mnav-btn flex flex-col items-center justify-center flex-1 h-full text-sky-600 font-bold text-xs gap-1">
+      <span class="text-lg">📊</span>
+      <span>גאנט</span>
+    </button>
+    <button onclick="mobileNav('orders')" data-mnav="orders" class="mnav-btn flex flex-col items-center justify-center flex-1 h-full text-slate-500 font-medium text-xs gap-1">
+      <span class="text-lg">📦</span>
+      <span>הזמנות</span>
+    </button>
+    <button onclick="mobileNav('chat')" data-mnav="chat" class="mnav-btn flex flex-col items-center justify-center flex-1 h-full text-slate-500 font-medium text-xs gap-1">
+      <span class="text-lg">🤖</span>
+      <span>עוזר AI</span>
+    </button>
+    <button onclick="mobileNav('compare')" data-mnav="compare" class="mnav-btn flex flex-col items-center justify-center flex-1 h-full text-slate-500 font-medium text-xs gap-1">
+      <span class="text-lg">⚖️</span>
+      <span>השוואה</span>
+    </button>
+  </nav>
+
+  <!-- New Order & Lead-Time Calculator Modal -->
+  <div id="new-order-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl p-5 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div>
+          <h3 class="text-base font-bold text-slate-800">קליטת הזמנה חדשה וחישוב זמן אספקה</h3>
+          <p class="text-xs text-slate-500">המודל מחשב זמן עיבוד ו-Setup לפי משפחת המוצר והעומס במכונות</p>
+        </div>
+        <button onclick="closeNewOrderModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+      </div>
+      <form onsubmit="submitNewOrder(event)" class="space-y-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">שם לקוח / תיאור הזמנה</label>
+            <input type="text" id="ord-customer" required placeholder="למשל: טבע - עלון לצרכן" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">משפחת מוצר (מגדיר מסלול)</label>
+            <select id="ord-family" onchange="updateOrderPreview()" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white">
+              <option value="labels">מדבקות ותוויות (5 תחנות)</option>
+              <option value="laminates">למינטים (3 תחנות)</option>
+              <option value="booklets">ספרונים ועלונים (4 תחנות)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">כמות יחידות</label>
+            <input type="number" id="ord-qty" min="1000" step="1000" value="30000" oninput="updateOrderPreview()" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">חומר גלם / גימור</label>
+            <select id="ord-material" onchange="updateOrderPreview()" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white">
+              <option value="PP לבן">PP לבן</option>
+              <option value="נייר כרומו">נייר כרומו</option>
+              <option value="למינט מט">למינט מט</option>
+              <option value="נייר פארמה דק">נייר פארמה דק</option>
+            </select>
+          </div>
+          <div class="col-span-2 sm:col-span-1">
+            <label class="block text-xs font-semibold text-slate-700 mb-1">יעד אספקה (ימים מהיום)</label>
+            <input type="number" id="ord-due-days" min="1" max="30" value="5" oninput="updateOrderPreview()" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <label class="flex items-center gap-2 text-xs font-semibold text-rose-700 cursor-pointer">
+            <input type="checkbox" id="ord-rush" onchange="updateOrderPreview()" />
+            <span>סמן כהזמנה דחופה (הפעלת Match-up)</span>
+          </label>
+          <span id="ord-route-preview" class="text-[11px] text-slate-600 font-medium"></span>
+        </div>
+
+        <div id="ord-eta-box" class="bg-sky-50 border border-sky-200 rounded-xl p-3 text-xs text-sky-900"></div>
+
+        <div class="flex gap-2 pt-1">
+          <button type="submit" class="flex-1 bg-sky-600 hover:bg-sky-500 text-white font-semibold py-2.5 rounded-xl text-sm">שבץ הזמנה לתוכנית</button>
+          <button type="button" onclick="closeNewOrderModal()" class="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm">ביטול</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- What-If Rush Order Modal -->
+  <div id="whatif-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl p-5 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div>
+          <h3 class="text-base font-bold text-rose-800">⚡ סימולציית "מה אם" – הקדמת עבודה דחופה</h3>
+          <p class="text-xs text-slate-500">כימות השפעת הזמנה דחופה על שאר ההזמנות, האיחורים וזמני ה-Setup</p>
+        </div>
+        <button onclick="closeWhatIfModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+      </div>
+      <form onsubmit="runWhatIfSimulation(event)" class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">שם הלקוח הדחוף</label>
+          <input type="text" id="wi-customer" required value="דקסל פארמה (דחוף)" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">משפחת מוצר</label>
+            <select id="wi-family" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white">
+              <option value="booklets">ספרונים ועלונים</option>
+              <option value="labels">מדבקות ותוויות</option>
+              <option value="laminates">למינטים</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">כמות יחידות</label>
+            <input type="number" id="wi-qty" value="45000" min="1000" step="1000" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">יעד אספקה מבוקש (ימים מהיום)</label>
+          <input type="number" id="wi-due" value="2" min="1" max="14" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button type="submit" class="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-semibold py-2.5 rounded-xl text-sm">הרץ סימולציית "מה אם"</button>
+          <button type="button" onclick="closeWhatIfModal()" class="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm">ביטול</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Operation Details Modal -->
+  <div id="op-detail-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-xl p-5 space-y-3">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+        <h3 class="text-base font-bold text-slate-800" id="op-modal-title">פרטי פעולה במכונה</h3>
+        <button onclick="document.getElementById('op-detail-modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600 font-bold">✕</button>
+      </div>
+      <div id="op-modal-body" class="text-xs sm:text-sm space-y-2 text-slate-700"></div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. DOMAIN MODEL - PRODUCTION FLOOR SCHEDULING
+    // =========================================================================
+    const STORAGE_KEY = 'production_floor_scheduler_v1';
+    const WORK_HOURS_PER_DAY = 16; // 2 shifts/day
+
+    const STATIONS = [
+      { id: 'print', name: '1. דפוס', short: 'דפוס' },
+      { id: 'finish', name: '2. קו גימור', short: 'גימור' },
+      { id: 'rewind', name: '3. גלגול וליפוף', short: 'גלגול' },
+      { id: 'booklet', name: '4. הרכבת ספרונים', short: 'ספרונים' },
+      { id: 'embellish', name: '5. השבחות', short: 'השבחות' },
+      { id: 'sheet', name: '6. חיתוך לגיליונות', short: 'חיתוך' }
+    ];
+
+    const PRODUCT_FAMILIES = {
+      labels: {
+        id: 'labels',
+        name: 'מדבקות ותוויות',
+        badge: 'bg-blue-100 text-blue-800 border-blue-200',
+        barColor: 'bg-blue-500',
+        matrix: { print: 1, finish: 1, rewind: 1, booklet: 0, embellish: 1, sheet: 1 },
+        route: ['print', 'finish', 'rewind', 'embellish', 'sheet'],
+        unitHoursPer10k: { print: 1.2, finish: 0.9, rewind: 0.6, embellish: 0.8, sheet: 0.5 }
+      },
+      laminates: {
+        id: 'laminates',
+        name: 'למינטים',
+        badge: 'bg-teal-100 text-teal-800 border-teal-200',
+        barColor: 'bg-teal-500',
+        matrix: { print: 1, finish: 1, rewind: 1, booklet: 0, embellish: 0, sheet: 0 },
+        route: ['print', 'finish', 'rewind'],
+        unitHoursPer10k: { print: 1.4, finish: 1.1, rewind: 0.7 }
+      },
+      booklets: {
+        id: 'booklets',
+        name: 'ספרונים ועלונים',
+        badge: 'bg-purple-100 text-purple-800 border-purple-200',
+        barColor: 'bg-purple-600',
+        matrix: { print: 1, finish: 1, rewind: 1, booklet: 1, embellish: 0, sheet: 0 },
+        route: ['print', 'finish', 'rewind', 'booklet'],
+        unitHoursPer10k: { print: 1.3, finish: 1.0, rewind: 0.7, booklet: 1.6 }
+      }
+    };
+
+    const MACHINES = [
+      { id: 'M-PR1', station: 'print', name: 'דפוס פלקסו 1 (תחליפית)', type: 'תחליפית', speedFactor: 1.0, families: ['labels', 'laminates', 'booklets'] },
+      { id: 'M-PR2', station: 'print', name: 'דפוס דיגיטלי 2 (תחליפית)', type: 'תחליפית', speedFactor: 0.95, families: ['labels', 'laminates', 'booklets'] },
+      { id: 'M-PR3', station: 'print', name: 'דפוס פארמה ייעודי 3', type: 'ייעודית', speedFactor: 1.1, families: ['booklets'] },
+      { id: 'M-FN1', station: 'finish', name: 'קו גימור 1 (תחליפית)', type: 'תחליפית', speedFactor: 1.0, families: ['labels', 'laminates', 'booklets'] },
+      { id: 'M-FN2', station: 'finish', name: 'קו גימור 2 (תחליפית)', type: 'תחליפית', speedFactor: 1.05, families: ['labels', 'laminates', 'booklets'] },
+      { id: 'M-RW1', station: 'rewind', name: 'מכונת גלגול וליפוף 1', type: 'תחליפית', speedFactor: 1.0, families: ['labels', 'laminates', 'booklets'] },
+      { id: 'M-RW2', station: 'rewind', name: 'מכונת גלגול וליפוף 2', type: 'תחליפית', speedFactor: 1.0, families: ['labels', 'laminates', 'booklets'] },
+      { id: 'M-BK1', station: 'booklet', name: 'קו הרכבת ספרונים (ייעודית)', type: 'ייעודית', speedFactor: 1.0, families: ['booklets'] },
+      { id: 'M-EM1', station: 'embellish', name: 'מכונת השבחות והטבעה (ייעודית)', type: 'ייעודית', speedFactor: 1.0, families: ['labels'] },
+      { id: 'M-SH1', station: 'sheet', name: 'גיליוטינה וחיתוך גיליונות', type: 'ייעודית', speedFactor: 1.0, families: ['labels'] }
+    ];
+
+    const DEFAULT_ORDERS = [
+      { id: 'ORD-101', customer: 'יקבי רמת הגולן', family: 'labels', qty: 45000, material: 'נייר כרומו', dueDays: 4, rush: false },
+      { id: 'ORD-102', customer: 'טבע תעשיות פרמצבטיות', family: 'booklets', qty: 35000, material: 'נייר פארמה דק', dueDays: 3, rush: true },
+      { id: 'ORD-103', customer: 'שטראוס מזון', family: 'laminates', qty: 60000, material: 'למינט מט', dueDays: 5, rush: false },
+      { id: 'ORD-104', customer: 'סנו מפעלי ברונוס', family: 'labels', qty: 50000, material: 'PP לבן', dueDays: 6, rush: false },
+      { id: 'ORD-105', customer: 'פריגו ישראל', family: 'booklets', qty: 25000, material: 'נייר פארמה דק', dueDays: 4, rush: false },
+      { id: 'ORD-106', customer: 'אסם השקעות', family: 'laminates', qty: 40000, material: 'למינט מט', dueDays: 7, rush: false },
+      { id: 'ORD-107', customer: 'קרליין קוסמטיקה', family: 'labels', qty: 30000, material: 'PP לבן', dueDays: 5, rush: false },
+      { id: 'ORD-108', customer: 'אדמה פתרונות לחקלאות', family: 'booklets', qty: 30000, material: 'נייר כרומו', dueDays: 6, rush: false }
+    ];
+
+    let state = {
+      orders: JSON.parse(JSON.stringify(DEFAULT_ORDERS)),
+      stationFilter: 'all',
+      mode: 'heuristic'
+    };
+
+    let currentPlan = null;
+
+    function loadState() {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          state = { ...state, ...parsed };
+        }
+      } catch (e) {}
+    }
+
+    function saveState() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch (e) {}
+    }
+
+    // =========================================================================
+    // 2. SEQUENCE-DEPENDENT SETUP & FORWARD SCHEDULING ENGINE
+    // =========================================================================
+    function calcSetupHours(prevOrder, nextOrder, stationId) {
+      if (!prevOrder) return 0.5;
+      let setup = 0.25;
+      if (prevOrder.family !== nextOrder.family) setup += 0.65;
+      if (prevOrder.material !== nextOrder.material) setup += 0.45;
+      if (stationId === 'print') setup *= 1.25;
+      return Number(setup.toFixed(2));
+    }
+
+    function calcProcHours(order, stationId, machine) {
+      const fam = PRODUCT_FAMILIES[order.family];
+      const basePer10k = fam.unitHoursPer10k[stationId] || 1.0;
+      const rawHours = (order.qty / 10000) * basePer10k * machine.speedFactor;
+      return Number(Math.max(0.5, rawHours).toFixed(2));
+    }
+
+    function solveProductionSchedule(ordersList, mode = 'heuristic') {
+      const orders = JSON.parse(JSON.stringify(ordersList));
+
+      if (mode === 'edd') {
+        orders.sort((a, b) => a.dueDays - b.dueDays);
+      } else {
+        orders.sort((a, b) => {
+          if (a.rush !== b.rush) return a.rush ? -1 : 1;
+          const fam = (o) => PRODUCT_FAMILIES[o.family].route.length;
+          const slackA = a.dueDays * WORK_HOURS_PER_DAY - fam(a) * 2.5;
+          const slackB = b.dueDays * WORK_HOURS_PER_DAY - fam(b) * 2.5;
+          if (Math.abs(slackA - slackB) < 12) {
+            return (a.family + a.material).localeCompare(b.family + b.material);
+          }
+          return slackA - slackB;
+        });
+      }
+
+      const machineAvailTime = {};
+      const machineLastOrder = {};
+      MACHINES.forEach(m => {
+        machineAvailTime[m.id] = 0;
+        machineLastOrder[m.id] = null;
+      });
+
+      const operations = [];
+      const orderSummaries = [];
+
+      orders.forEach(order => {
+        const fam = PRODUCT_FAMILIES[order.family];
+        let prevOpEnd = 0;
+
+        fam.route.forEach((stationId, stepIdx) => {
+          const eligibleMachines = MACHINES.filter(m =>
+            m.station === stationId && m.families.includes(order.family)
+          );
+
+          let bestMachine = eligibleMachines[0];
+          let bestScore = Infinity;
+          let bestStart = 0;
+          let bestSetup = 0;
+          let bestProc = 0;
+
+          eligibleMachines.forEach(m => {
+            const setup = calcSetupHours(machineLastOrder[m.id], order, stationId);
+            const proc = calcProcHours(order, stationId, m);
+            const start = Math.max(prevOpEnd, machineAvailTime[m.id]);
+            const end = start + setup + proc;
+            const score = mode === 'heuristic' ? end + setup * 1.5 : end;
+            if (score < bestScore) {
+              bestScore = score;
+              bestMachine = m;
+              bestStart = start;
+              bestSetup = setup;
+              bestProc = proc;
+            }
+          });
+
+          const opEnd = Number((bestStart + bestSetup + bestProc).toFixed(2));
+          machineAvailTime[bestMachine.id] = opEnd;
+          machineLastOrder[bestMachine.id] = order;
+          prevOpEnd = opEnd;
+
+          operations.push({
+            orderId: order.id,
+            customer: order.customer,
+            family: order.family,
+            qty: order.qty,
+            material: order.material,
+            rush: order.rush,
+            stationId,
+            stepIdx: stepIdx + 1,
+            totalSteps: fam.route.length,
+            machineId: bestMachine.id,
+            machineName: bestMachine.name,
+            startHour: bestStart,
+            setupHours: bestSetup,
+            procHours: bestProc,
+            endHour: opEnd
+          });
+        });
+
+        const completionDays = Number((prevOpEnd / WORK_HOURS_PER_DAY).toFixed(2));
+        const tardinessDays = Number(Math.max(0, completionDays - order.dueDays).toFixed(2));
+        orderSummaries.push({
+          ...order,
+          completionHours: prevOpEnd,
+          completionDays,
+          tardinessDays,
+          onTime: tardinessDays === 0
+        });
+      });
+
+      const totalOrders = orderSummaries.length || 1;
+      const onTimeCount = orderSummaries.filter(o => o.onTime).length;
+      const otdPct = Math.round((onTimeCount / totalOrders) * 100);
+      const avgLeadDays = Number((orderSummaries.reduce((s, o) => s + o.completionDays, 0) / totalOrders).toFixed(2));
+      const lateOrders = orderSummaries.filter(o => !o.onTime);
+      const avgTardiness = lateOrders.length > 0
+        ? Number((lateOrders.reduce((s, o) => s + o.tardinessDays, 0) / lateOrders.length).toFixed(2))
+        : 0;
+
+      const totalProcHours = operations.reduce((s, op) => s + op.procHours, 0);
+      const totalSetupHours = Number(operations.reduce((s, op) => s + op.setupHours, 0).toFixed(1));
+      const makespanHours = Math.max(1, ...operations.map(op => op.endHour));
+      const utilizationPct = Math.min(98, Math.round((totalProcHours / (MACHINES.length * makespanHours * 0.55)) * 100));
+
+      return {
+        mode,
+        operations,
+        orderSummaries,
+        makespanHours,
+        kpis: {
+          otdPct,
+          avgLeadDays,
+          avgTardiness,
+          utilizationPct,
+          totalSetupHours,
+          lateCount: lateOrders.length,
+          totalOrders: orderSummaries.length
+        }
+      };
+    }
+
+    function runSchedulingEngine() {
+      state.mode = document.getElementById('scheduler-mode').value;
+      currentPlan = solveProductionSchedule(state.orders, state.mode);
+      saveState();
+      renderAll();
+    }
+
+    // =========================================================================
+    // 3. UI RENDERING
+    // =========================================================================
+    function renderAll() {
+      if (!currentPlan) currentPlan = solveProductionSchedule(state.orders, state.mode);
+      const { kpis } = currentPlan;
+
+      document.getElementById('kpi-otd').textContent = `${kpis.otdPct}%`;
+      document.getElementById('kpi-otd').className = `text-lg sm:text-xl font-bold ${kpis.otdPct >= 75 ? 'text-emerald-600' : 'text-amber-600'}`;
+      document.getElementById('kpi-lead').textContent = `${kpis.avgLeadDays} ימים`;
+      document.getElementById('kpi-tardiness').textContent = `${kpis.avgTardiness} ימים`;
+      document.getElementById('kpi-util').textContent = `${kpis.utilizationPct}%`;
+      document.getElementById('kpi-setup-total').textContent = `Setup: ${kpis.totalSetupHours} ש׳`;
+      document.getElementById('kpi-orders-count').textContent = `${kpis.totalOrders} הזמנות`;
+      document.getElementById('kpi-late-count').textContent = `${kpis.lateCount} באיחור`;
+
+      renderGanttView();
+      renderOrdersView();
+      renderRoutingView();
+      renderComparisonView();
+    }
+
+    function renderGanttView() {
+      const container = document.getElementById('gantt-container');
+      const visibleMachines = state.stationFilter === 'all'
+        ? MACHINES
+        : MACHINES.filter(m => m.station === state.stationFilter);
+
+      const maxHours = Math.max(32, Math.ceil(currentPlan.makespanHours / 8) * 8);
+      const totalDays = Math.ceil(maxHours / WORK_HOURS_PER_DAY);
+
+      let dayHeaders = '';
+      for (let d = 1; d <= totalDays; d++) {
+        dayHeaders += `<div class="flex-1 text-center text-[10px] font-bold text-slate-500 border-r border-slate-200 py-1">יום ${d} (${WORK_HOURS_PER_DAY}ש׳)</div>`;
+      }
+
+      container.innerHTML = visibleMachines.map(machine => {
+        const ops = currentPlan.operations.filter(op => op.machineId === machine.id);
+        const stationObj = STATIONS.find(s => s.id === machine.station);
+
+        const barsHtml = ops.map(op => {
+          const fam = PRODUCT_FAMILIES[op.family];
+          const leftPct = (op.startHour / maxHours) * 100;
+          const setupPct = (op.setupHours / maxHours) * 100;
+          const procPct = (op.procHours / maxHours) * 100;
+          const opJson = JSON.stringify(op).replace(/"/g, '&quot;');
+
+          return `
+            <div onclick="showOpDetail(${opJson})" style="right: ${leftPct}%; width: ${setupPct + procPct}%;" class="gantt-bar absolute top-1.5 bottom-1.5 flex rounded-md overflow-hidden shadow-sm cursor-pointer border border-white/60" title="${op.orderId} - ${op.customer}">
+              <div style="width: ${(setupPct / (setupPct + procPct)) * 100}%;" class="bg-amber-400 h-full shrink-0" title="Setup: ${op.setupHours} שעות"></div>
+              <div class="${fam.barColor} flex-1 h-full px-1.5 flex items-center justify-between text-white text-[10px] font-bold truncate">
+                <span class="truncate">${op.orderId} ${op.rush ? '⚡' : ''}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-bold text-slate-800">${machine.name}</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-medium">${stationObj.short}</span>
+              </div>
+              <span class="text-[10px] px-2 py-0.5 rounded font-semibold ${machine.type === 'ייעודית' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}">
+                ${machine.type}
+              </span>
+            </div>
+            <div class="flex border-b border-slate-100 bg-slate-50/50">${dayHeaders}</div>
+            <div class="relative h-11 bg-white w-full overflow-hidden">
+              ${ops.length === 0 ? '<div class="h-full flex items-center justify-center text-[11px] text-slate-400">אין עבודות משובצות למכונה זו</div>' : barsHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderOrdersView() {
+      const list = document.getElementById('orders-list');
+      list.innerHTML = currentPlan.orderSummaries.map(ord => {
+        const fam = PRODUCT_FAMILIES[ord.family];
+        return `
+          <div class="border ${ord.onTime ? 'border-slate-200' : 'border-rose-300 bg-rose-50/30'} rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div class="space-y-1">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="text-xs font-bold text-slate-500">${ord.id}</span>
+                <span class="text-sm font-bold text-slate-900">${ord.customer}</span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-semibold border ${fam.badge}">${fam.name}</span>
+                ${ord.rush ? '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white">⚡ דחוף</span>' : ''}
+              </div>
+              <div class="text-xs text-slate-600">
+                כמות: <b>${ord.qty.toLocaleString()}</b> יח׳ • חומר: <b>${ord.material}</b> • מסלול: <b>${fam.route.length} תחנות</b>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+              <div class="text-right sm:text-left text-xs">
+                <div>יעד מובטח: <b>יום ${ord.dueDays}</b></div>
+                <div>סיום צפוי: <b class="${ord.onTime ? 'text-emerald-700' : 'text-rose-700'}">יום ${ord.completionDays}</b> (${ord.completionHours} ש׳)</div>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="px-2.5 py-1 rounded-lg text-xs font-bold ${ord.onTime ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
+                  ${ord.onTime ? '✓ בזמן' : `איחור ${ord.tardinessDays} ימים`}
+                </span>
+                <button onclick="deleteOrder('${ord.id}')" class="w-7 h-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 font-bold text-xs" title="מחק הזמנה">✕</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderRoutingView() {
+      const tbody = document.getElementById('routing-matrix-body');
+      tbody.innerHTML = Object.values(PRODUCT_FAMILIES).map(fam => {
+        const cols = STATIONS.map(st => {
+          const val = fam.matrix[st.id];
+          return `<td class="p-2.5 font-bold ${val ? 'text-emerald-600 bg-emerald-50/50' : 'text-slate-300'}">${val ? '1 (✓)' : '0'}</td>`;
+        }).join('');
+        return `
+          <tr>
+            <td class="p-2.5 text-right font-bold text-slate-800">${fam.name}</td>
+            ${cols}
+          </tr>
+        `;
+      }).join('');
+
+      const mGrid = document.getElementById('machines-grid');
+      mGrid.innerHTML = MACHINES.map(m => {
+        const st = STATIONS.find(s => s.id === m.station);
+        return `
+          <div class="border border-slate-200 rounded-xl p-3 bg-slate-50/50 flex items-center justify-between">
+            <div>
+              <div class="text-xs font-bold text-slate-800">${m.name}</div>
+              <div class="text-[11px] text-slate-500">תחנה: ${st.name} • משפחות: ${m.families.map(f => PRODUCT_FAMILIES[f].name).join(', ')}</div>
+            </div>
+            <span class="text-[11px] px-2 py-0.5 rounded font-semibold ${m.type === 'ייעודית' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}">${m.type}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderComparisonView() {
+      const manualPlan = solveProductionSchedule(state.orders, 'edd');
+      const autoPlan = solveProductionSchedule(state.orders, 'heuristic');
+
+      const rows = [
+        { metric: 'אחוז הזמנות שסופקו בזמן (OTD)', manual: `${manualPlan.kpis.otdPct}%`, auto: `${autoPlan.kpis.otdPct}%`, goal: 'שיפור של ~20 נק׳ אחוז' },
+        { metric: 'זמן אספקה ממוצע (ימים)', manual: `${manualPlan.kpis.avgLeadDays} ימים`, auto: `${autoPlan.kpis.avgLeadDays} ימים`, goal: 'קיצור של 15%–20%' },
+        { metric: 'איחור ממוצע להזמנות מאחרות', manual: `${manualPlan.kpis.avgTardiness} ימים`, auto: `${autoPlan.kpis.avgTardiness} ימים`, goal: 'קיצור של ~30%' },
+        { metric: 'סך זמני התארגנות (Setup)', manual: `${manualPlan.kpis.totalSetupHours} שעות`, auto: `${autoPlan.kpis.totalSetupHours} שעות`, goal: 'צמצום החלפות ופחת' },
+        { metric: 'ניצולת מכונות אפקטיבית', manual: `${manualPlan.kpis.utilizationPct}%`, auto: `${autoPlan.kpis.utilizationPct}%`, goal: 'עלייה של 5%–10%' }
+      ];
+
+      document.getElementById('comparison-table-container').innerHTML = `
+        <table class="w-full text-xs sm:text-sm text-right border-collapse">
+          <thead>
+            <tr class="bg-slate-100 text-slate-700 border-b border-slate-200">
+              <th class="p-3 font-bold">מדד הצלחה (KPI)</th>
+              <th class="p-3 font-bold text-slate-600">תכנון ידני (EDD)</th>
+              <th class="p-3 font-bold text-sky-700">מודל אוטומטי מוצע</th>
+              <th class="p-3 font-bold text-emerald-700">יעד הפרויקט (אבן דרך 1)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            ${rows.map(r => `
+              <tr>
+                <td class="p-3 font-semibold text-slate-800">${r.metric}</td>
+                <td class="p-3 text-slate-600">${r.manual}</td>
+                <td class="p-3 font-bold text-sky-700 bg-sky-50/40">${r.auto}</td>
+                <td class="p-3 text-xs text-emerald-700 font-medium">${r.goal}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    // =========================================================================
+    // 4. INTERACTIVE MODALS, WHAT-IF & CSV IMPORT/EXPORT
+    // =========================================================================
+    function switchTab(tabName) {
+      ['gantt', 'orders', 'routing', 'compare'].forEach(t => {
+        document.getElementById(`view-${t}`).classList.toggle('hidden', t !== tabName);
+      });
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        const active = btn.dataset.tab === tabName;
+        btn.className = active
+          ? 'tab-btn flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-semibold bg-sky-600 text-white transition'
+          : 'tab-btn flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-100 transition';
+      });
+    }
+
+    function mobileNav(target) {
+      const workspace = document.getElementById('panel-workspace');
+      const chat = document.getElementById('panel-chat');
+
+      document.querySelectorAll('.mnav-btn').forEach(btn => {
+        const active = btn.dataset.mnav === target;
+        btn.className = active
+          ? 'mnav-btn flex flex-col items-center justify-center flex-1 h-full text-sky-600 font-bold text-xs gap-1'
+          : 'mnav-btn flex flex-col items-center justify-center flex-1 h-full text-slate-500 font-medium text-xs gap-1';
+      });
+
+      if (target === 'chat') {
+        workspace.classList.add('hidden');
+        chat.classList.remove('hidden');
+        chat.classList.add('flex', 'h-[calc(100vh-235px)]');
+      } else {
+        chat.classList.add('hidden');
+        chat.classList.remove('flex');
+        workspace.classList.remove('hidden');
+        switchTab(target);
+      }
+    }
+
+    function setStationFilter(stId) {
+      state.stationFilter = stId;
+      document.querySelectorAll('.st-filter-btn').forEach(btn => {
+        const active = btn.dataset.st === stId;
+        btn.className = active
+          ? 'st-filter-btn px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-900 text-white shrink-0'
+          : 'st-filter-btn px-3 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 border border-slate-200 shrink-0';
+      });
+      renderGanttView();
+    }
+
+    function showOpDetail(op) {
+      const fam = PRODUCT_FAMILIES[op.family];
+      const st = STATIONS.find(s => s.id === op.stationId);
+      document.getElementById('op-modal-title').textContent = `${op.orderId} • ${op.customer}`;
+      document.getElementById('op-modal-body').innerHTML = `
+        <div class="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+          <div><span class="text-slate-500">משפחת מוצר:</span> <b>${fam.name}</b></div>
+          <div><span class="text-slate-500">תחנה:</span> <b>${st.name} (${op.stepIdx}/${op.totalSteps})</b></div>
+          <div><span class="text-slate-500">מכונה:</span> <b>${op.machineName}</b></div>
+          <div><span class="text-slate-500">כמות:</span> <b>${op.qty.toLocaleString()} יח׳</b></div>
+          <div><span class="text-slate-500">זמן התארגנות (Setup):</span> <b class="text-amber-700">${op.setupHours} שעות</b></div>
+          <div><span class="text-slate-500">זמן עיבוד נטו:</span> <b class="text-sky-700">${op.procHours} שעות</b></div>
+          <div><span class="text-slate-500">התחלה:</span> <b>שעה ${op.startHour}</b></div>
+          <div><span class="text-slate-500">סיום:</span> <b>שעה ${op.endHour}</b></div>
+        </div>
+      `;
+      document.getElementById('op-detail-modal').classList.remove('hidden');
+    }
+
+    function openNewOrderModal() {
+      document.getElementById('new-order-modal').classList.remove('hidden');
+      updateOrderPreview();
+    }
+    function closeNewOrderModal() {
+      document.getElementById('new-order-modal').classList.add('hidden');
+    }
+
+    function updateOrderPreview() {
+      const famKey = document.getElementById('ord-family').value;
+      const qty = Number(document.getElementById('ord-qty').value) || 10000;
+      const material = document.getElementById('ord-material').value;
+      const dueDays = Number(document.getElementById('ord-due-days').value) || 5;
+      const rush = document.getElementById('ord-rush').checked;
+      const fam = PRODUCT_FAMILIES[famKey];
+
+      document.getElementById('ord-route-preview').textContent =
+        `מסלול: ${fam.route.map(r => STATIONS.find(s => s.id === r).short).join(' ← ')}`;
+
+      const tempOrder = { id: 'PREVIEW', customer: 'בדיקה', family: famKey, qty, material, dueDays, rush };
+      const simPlan = solveProductionSchedule([...state.orders, tempOrder], state.mode);
+      const res = simPlan.orderSummaries.find(o => o.id === 'PREVIEW');
+
+      document.getElementById('ord-eta-box').innerHTML = `
+        <b>אומדן זמן אספקה מציאותי להזמנה זו:</b> סיום צפוי בעוד <b>${res.completionDays} ימים</b> (${res.completionHours} שעות ייצור ותור)
+        ${res.onTime
+          ? `<span class="text-emerald-700 font-bold"> • עומד ביעד האספקה (יום ${dueDays}) ✓</span>`
+          : `<span class="text-rose-700 font-bold"> • צפוי איחור של ${res.tardinessDays} ימים ביחס ליעד (יום ${dueDays}) ⚠️</span>`}
+      `;
+    }
+
+    function submitNewOrder(e) {
+      e.preventDefault();
+      const newOrd = {
+        id: 'ORD-' + (100 + state.orders.length + 1),
+        customer: document.getElementById('ord-customer').value.trim(),
+        family: document.getElementById('ord-family').value,
+        qty: Number(document.getElementById('ord-qty').value) || 20000,
+        material: document.getElementById('ord-material').value,
+        dueDays: Number(document.getElementById('ord-due-days').value) || 5,
+        rush: document.getElementById('ord-rush').checked
+      };
+      state.orders.push(newOrd);
+      closeNewOrderModal();
+      runSchedulingEngine();
+    }
+
+    function deleteOrder(ordId) {
+      state.orders = state.orders.filter(o => o.id !== ordId);
+      runSchedulingEngine();
+    }
+
+    function openWhatIfModal() {
+      document.getElementById('whatif-modal').classList.remove('hidden');
+    }
+    function closeWhatIfModal() {
+      document.getElementById('whatif-modal').classList.add('hidden');
+    }
+    function dismissWhatIfBanner() {
+      document.getElementById('whatif-banner').classList.add('hidden');
+    }
+
+    function runWhatIfSimulation(e) {
+      e.preventDefault();
+      const customer = document.getElementById('wi-customer').value.trim();
+      const family = document.getElementById('wi-family').value;
+      const qty = Number(document.getElementById('wi-qty').value) || 30000;
+      const dueDays = Number(document.getElementById('wi-due').value) || 2;
+      closeWhatIfModal();
+      executeWhatIfAnalysis(customer, family, qty, dueDays);
+    }
+
+    function executeWhatIfAnalysis(customer, family, qty, dueDays) {
+      const baselinePlan = solveProductionSchedule(state.orders, 'heuristic');
+      const rushOrder = {
+        id: 'RUSH-' + (state.orders.length + 1),
+        customer,
+        family,
+        qty,
+        material: family === 'booklets' ? 'נייר פארמה דק' : 'PP לבן',
+        dueDays,
+        rush: true
+      };
+
+      const updatedOrders = [...state.orders, rushOrder];
+      const newPlan = solveProductionSchedule(updatedOrders, 'heuristic');
+
+      let delayedOrdersCount = 0;
+      let addedTardinessDays = 0;
+      let impactedNames = [];
+
+      baselinePlan.orderSummaries.forEach(baseOrd => {
+        const afterOrd = newPlan.orderSummaries.find(o => o.id === baseOrd.id);
+        if (afterOrd && afterOrd.completionDays > baseOrd.completionDays + 0.05) {
+          delayedOrdersCount++;
+          const diff = Number((afterOrd.completionDays - baseOrd.completionDays).toFixed(2));
+          if (afterOrd.tardinessDays > baseOrd.tardinessDays) {
+            addedTardinessDays += (afterOrd.tardinessDays - baseOrd.tardinessDays);
+          }
+          impactedNames.push(`${baseOrd.id} (${baseOrd.customer}: +${diff} ימים)`);
+        }
+      });
+
+      const addedSetup = Number((newPlan.kpis.totalSetupHours - baselinePlan.kpis.totalSetupHours).toFixed(2));
+      const rushSummary = newPlan.orderSummaries.find(o => o.id === rushOrder.id);
+
+      state.orders = updatedOrders;
+      currentPlan = newPlan;
+      saveState();
+      renderAll();
+
+      const summaryHtml = `
+        • <b>סיום ההזמנה הדחופה (${rushOrder.id} - ${customer}):</b> יום <b>${rushSummary.completionDays}</b> (${rushSummary.onTime ? 'עומד ביעד ✓' : 'איחור ' + rushSummary.tardinessDays + ' ימים'}).<br/>
+        • <b>הזמנות קיימות שנדחו:</b> <b>${delayedOrdersCount}</b> הזמנות ${impactedNames.length ? '(' + impactedNames.slice(0, 3).join(', ') + ')' : ''}.<br/>
+        • <b>תוספת ימי איחור כוללת למערכת:</b> <b>+${addedTardinessDays.toFixed(2)} ימים</b> | <b>תוספת זמני התארגנות (Setup):</b> <b>+${addedSetup} שעות</b>.
+      `;
+
+      document.getElementById('whatif-summary').innerHTML = summaryHtml;
+      document.getElementById('whatif-banner').classList.remove('hidden');
+      return summaryHtml;
+    }
+
+    function resetDemoData() {
+      state.orders = JSON.parse(JSON.stringify(DEFAULT_ORDERS));
+      dismissWhatIfBanner();
+      runSchedulingEngine();
+    }
+
+    function exportScheduleCSV() {
+      let rows = [['מזהה הזמנה', 'לקוח', 'משפחת מוצר', 'תחנה', 'מכונה', 'שעת התחלה', 'Setup (שעות)', 'עיבוד (שעות)', 'שעת סיום']];
+      currentPlan.operations.forEach(op => {
+        rows.push([
+          op.orderId,
+          op.customer,
+          PRODUCT_FAMILIES[op.family].name,
+          STATIONS.find(s => s.id === op.stationId).name,
+          op.machineName,
+          op.startHour,
+          op.setupHours,
+          op.procHours,
+          op.endHour
+        ]);
+      });
+      const csvContent = '\uFEFF' + rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'production_schedule.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadStandaloneHTML() {
+      const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'index.html';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function handleCSVUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const lines = e.target.result.split(/\r?\n/).filter(Boolean);
+        const imported = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(',').map(c => c.replace(/^"|"$/g, '').trim());
+          if (cols.length >= 4) {
+            const famRaw = cols[2];
+            const famKey = famRaw.includes('ספרונ') ? 'booklets' : famRaw.includes('למינט') ? 'laminates' : 'labels';
+            imported.push({
+              id: cols[0] || `ORD-${200 + i}`,
+              customer: cols[1] || `לקוח ${i}`,
+              family: famKey,
+              qty: Number(cols[3]) || 25000,
+              material: cols[4] || 'PP לבן',
+              dueDays: Number(cols[5]) || 5,
+              rush: cols[6] === '1' || cols[6] === 'כן'
+            });
+          }
+        }
+        if (imported.length > 0) {
+          state.orders = imported;
+          runSchedulingEngine();
+        }
+      };
+      reader.readAsText(file, 'UTF-8');
+    }
+
+    // =========================================================================
+    // 5. AI SCHEDULING CO-PILOT
+    // =========================================================================
+    function resetChat() {
+      const box = document.getElementById('chat-messages');
+      box.innerHTML = '';
+      appendBotMessage('שלום! אני עוזר התזמון של רצפת הייצור. תוכל לבקש ממני להריץ סימולציית <b>"מה אם"</b> להזמנה דחופה, לבדוק אילו הזמנות בסיכון לאיחור, או להשוות את המודל לתכנון הידני.');
+    }
+
+    function sendQuickPrompt(text) {
+      document.getElementById('chat-input').value = text;
+      handleChatSubmit(new Event('submit'));
+    }
+
+    function appendUserMessage(text) {
+      const box = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = 'flex justify-start';
+      div.innerHTML = `<div class="bg-sky-600 text-white rounded-2xl rounded-tr-xs px-3.5 py-2 text-xs sm:text-sm max-w-[85%] shadow-sm">${text}</div>`;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function appendBotMessage(htmlContent) {
+      const box = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = 'flex justify-end';
+      div.innerHTML = `<div class="bg-white border border-slate-200 text-slate-800 rounded-2xl rounded-tl-xs px-3.5 py-2.5 text-xs sm:text-sm max-w-[92%] shadow-sm leading-relaxed">${htmlContent}</div>`;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function handleChatSubmit(e) {
+      e.preventDefault();
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      appendUserMessage(text);
+
+      if (/דחוף|דחופה|מה אם|הקדם|הכנס הזמנה/.test(text)) {
+        const family = text.includes('ספרונ') ? 'booklets' : text.includes('למינט') ? 'laminates' : 'labels';
+        const qtyMatch = text.match(/(\d[\d,]*)/);
+        const qty = qtyMatch ? Number(qtyMatch[1].replace(/,/g, '')) : 35000;
+        const customerMatch = text.match(/ללקוח\s+([^\s,]+)/);
+        const customer = customerMatch ? `${customerMatch[1]} (דחוף)` : 'לקוח דחוף';
+        const resHtml = executeWhatIfAnalysis(customer, family, qty < 1000 ? qty * 1000 : qty, 2);
+        appendBotMessage(`הרצתי סימולציית <b>Match-up</b> להזמנה דחופה:<br/>${resHtml}`);
+        return;
+      }
+
+      if (/השוו|ידני|edd|מדד|kpi/.test(text.toLowerCase())) {
+        const manual = solveProductionSchedule(state.orders, 'edd').kpis;
+        const auto = solveProductionSchedule(state.orders, 'heuristic').kpis;
+        switchTab('compare');
+        appendBotMessage(
+          `<b>השוואת המודל המוצע מול תכנון ידני (EDD):</b><br/>` +
+          `• אספקה בזמן (OTD): <b>${auto.otdPct}%</b> לעומת <b>${manual.otdPct}%</b> בידני.<br/>` +
+          `• זמן אספקה ממוצע: <b>${auto.avgLeadDays} ימים</b> לעומת <b>${manual.avgLeadDays} ימים</b>.<br/>` +
+          `• סך זמני Setup: <b>${auto.totalSetupHours} ש׳</b> לעומת <b>${manual.totalSetupHours} ש׳</b>.`
+        );
+        return;
+      }
+
+      if (/איחור|בסיכון|מאחר/.test(text)) {
+        const late = currentPlan.orderSummaries.filter(o => !o.onTime);
+        if (late.length === 0) {
+          appendBotMessage('מצוין! בתוכנית הנוכחית <b>אין הזמנות באיחור</b> (100% עמידה ביעדי האספקה).');
+        } else {
+          const list = late.map(o => `• <b>${o.id} (${o.customer}):</b> יעד יום ${o.dueDays}, סיום צפוי יום ${o.completionDays} (איחור ${o.tardinessDays} ימים)`).join('<br/>');
+          appendBotMessage(`נמצאו <b>${late.length}</b> הזמנות בסיכון לאיחור:<br/>${list}`);
+        }
+        return;
+      }
+
+      appendBotMessage('תוכל לבקש ממני: <i>"הכנס הזמנה דחופה של 40,000 ספרונים ללקוח טבע"</i>, <i>"אילו הזמנות בסיכון לאיחור?"</i> או <i>"השווה בין המודל המוצע לתכנון ידני"</i>.');
+    }
+
+    // Initialize Application
+    loadState();
+    document.getElementById('scheduler-mode').value = state.mode;
+    runSchedulingEngine();
+    resetChat();
+  </script>
+</body>
+</html>
